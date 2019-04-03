@@ -1,0 +1,338 @@
+---
+title: "Proposal"
+author: "Hanxuan Ye"
+date: "2019/3/2"
+output: html_document
+---
+
+```{r, echo=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+train <- read_csv("train.csv")
+summary(train)
+```
+
+
+
+## Background 
+
+The taxi industry is developing rapidly. New competitors and technologies are changing the way traditional taxi services do business. This development brings about efficiency, accompanied by new problems.  
+
+A major evolvement is that the electronic dispatch system has replaced VHF-radio dispatch system. The mobile data terminals installed in each vehicle can provide information on GPS location and taximeter state. This can make it easy to see where the taxi has been but not where it is going.
+
+Another recent change is the switch from broadcast-based (one to many) radio messages to unicast-based (one to one) messages. With unicast-messages, the dispatcher should decide which taxi they should dispatch to a pick up location. Meanwhile, it is hard for dispatcher to dispatch the car because the taxi usually do not enter the drop off location.
+
+You might know where the taxi is going by tracking its spatial trajectory. Similarly, given the taxi id, it might be possible to predict its final destination based on the regularity of pre-hired services. In a significant number of taxi rides (approximately 25%), the taxi has been called through the taxi call-center, and the passenger’s telephone id can be used to narrow the destination prediction based on historical ride data connected to their telephone id. 
+
+
+## Dataset
+
+
+The dataset includes a complete year (from 01/07/2013 to 30/06/2014) of the trajectories for all 442 taxis in the city of Porto, Portugal. These taxis operates through a taxi dispatch central with mobile data terminal installed in the vehicles. Each ride is categorized into one of three categories: 
+
+*  taxi central based. 
+*  stand-based.
+*  non-taxi central based.
+
+when such information is available from the telephone call. The last two categories refer to services that were demanded directly to the taxi drivers on a taxi stand or on a random street.
+
+*  **TRIP_ID:** (String) It contains an unique identifier for each trip;
+*  **CALL_TYPE:** (char) It identifies the way used to demand this service. It may contain one of three possible values:
+     1. 'A' if this trip was dispatched from the central;
+     2. 'B' if this trip was demanded directly to a taxi driver on a specific stand;
+     3. 'C' otherwise (i.e. a trip demanded on a random street).
+*  **ORIGIN_CALL:** (integer): It contains an unique identifier for the taxi stand. It identifies the starting point of the trip if CALL_TYPE=’B’. Otherwise, it assumes a NULL value;
+*  **ORIGIN_STAND:** (integer): It contains an unique identifier for the taxi stand. It identifies the starting point of the trip if CALL_TYPE=’B’. Otherwise, it assumes a NULL value;
+*  **TAXI_ID:** (integer): It contains an unique identifier for the taxi driver that performed each trip;
+*  **TIMESTAMP:** (integer) Unix Timestamp (in seconds). It identifies the trip's start;
+*  **DAYTYPE:** (char) It identifies the daytype of the trip's start. It assumes one of three possible values:
+     1. 'B' if this trip started on a holiday or any other special day (i.e. extending holidays, floating holidays, etc.);
+     2. 'C' if the trip started on a day before a type-B day;
+     3. 'A' otherwise (i.e. a normal day, workday or weekend).
+*  **MISSING_DATA** (Boolean) It is FALSE when the GPS data stream is complete and TRUE whenever one (or more) locations are missing.
+*  **POLYLINE** (String): It contains a list of GPS coordinates (i.e. WGS84 format) mapped as a string. The beginning and the end of the string are identified with brackets (i.e. [ and ], respectively). Each pair of coordinates is also identified by the same brackets as [LONGITUDE, LATITUDE]. This list contains one pair of coordinates for each 15 seconds of trip. The last list item corresponds to the trip’s destination while the first one represents its start;
+
+
+## Questions
+
+*  How to predict the destination of a taxi while it is in service?  If you can predict precisely, it will allow dispatcher to identify which taxi to assign to each pickup request. (usually, in a high demand period, there is a taxi end up near or exactly at a requested pick up location).
+
+*  What's the relationship bettween taxi id and final destination? Given a taxi id, it might be possible to predict its final destination based on regularity of pre-hired services.
+
+*  Can we predict how long a driver will have his taxi occupied? If a dispatcher know when a taxi will be ending the trip, they would be better able to assign to each pickup request. 
+
+
+## EDA 
+Pre-process the data.
+```{r}
+length(train$POLYLINE)
+head(train)
+tail(train)
+newtrain = train[train$MISSING_DATA == FALSE,]
+misstrain = train[train$MISSING_DATA == TRUE,]
+```
+Make a plot with respect to date.
+```{r}
+Date = as.Date(as.POSIXct(newtrain$TIMESTAMP,origin = "1970-01-01"))
+#View(Date)
+#tail(Date)
+newtrain =cbind(newtrain, Date)
+TABLE = table(newtrain$Date)
+summary(TABLE)
+TABLE = as.data.frame(TABLE)
+ggplot(data = TABLE, aes(x=Var1, y=Freq))+geom_point()+labs(title = 'Evolution of number of trips (2013/07 - 2014/07)', x = "Date of Trips", y = 'Number of Trips')
+
+```
+
+Load the rstan and shinystan packages.
+```{r}
+## Load the package rstan and shinystan
+library("rstan")
+library(shinystan)
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+mc.cores=parallel::detectCores()
+```
+
+There are 17 million Trajectories and we only randomly pick part of them. coordinates can be coverted to numeric form by using rjson package. We then know the trajectory length and positions of each trip.
+```{r}
+library(rjson)
+
+set.seed(2)
+positions = function(row){
+  as.data.frame(do.call(rbind, rjson::fromJSON(row$POLYLINE)))
+}
+
+Newtrain_ID = sample(dim(newtrain)[1],size = 1000, replace = F)
+Newtrain = newtrain[Newtrain_ID,]
+
+#Coor = data.frame(TripId=c(), trace= c())
+Coor = rep(list(), dim(Newtrain)[1])
+coordinates = data.frame(TripId=c(),Ordinal = c(), Lat=c(), Lon=c(), Status = c(), Endpoint=c())
+length = c()
+for (i in 1:nrow(Newtrain)){
+  pos = positions(Newtrain[i,])
+  length = rbind(length, nrow(pos)) 
+}
+
+Newtrain = Newtrain[length != 0,]
+
+```
+
+Each trajectory has a different length: shorter trip contains fewer $(x,y)$ coordinates than longer ones. The average trip is approximately 13 minutes long, which correspongding to 50 coordinates. We interpolate all trajectories to 50 coordinate pairs, that is, a point in $\mathbb{R}^{100}$. In order to accelerate the procedure, we use R in parallel.
+```{r}
+library(foreach)
+library(doSNOW)
+numCores = parallel::detectCores()
+clus = makeCluster(numCores)
+registerDoSNOW(clus) 
+
+system.time( { {
+  Coor = foreach (i=1:nrow(Newtrain)) %dopar% {
+  pos = positions(Newtrain[i,])
+  if (nrow(pos) == 1){
+    z = c(rep(pos$V1,50),rep(pos$V2,50))
+    Coor[[i]] = data.frame(TripId =  Newtrain$TRIP_ID[i], trace = z )
+  }
+  else 
+  {
+    z = approx(pos$V1,pos$V2,method = "linear" , n = 50)
+    Trace = rep(0, 2*length(z$x))
+    Trace[2*(1:length(z$x))-1] = z$x
+    Trace[2*(1:length(z$x))] = z$y
+
+   Coor[[i]] = data.frame(TripId = Newtrain$TRIP_ID[i], trace = Trace)
+  }
+}
+
+}})
+
+system.time( { {
+  coordinates = foreach (i=1:nrow(Newtrain)) %dopar% {
+  pos = positions(Newtrain[i,])
+  if (nrow(pos) == 1){
+   status = c("start")
+  }
+  else 
+  {
+     status = c("start", rep("During Trip", nrow(pos)-2), "Last Obersevation")
+
+  }
+   coordinates = rbind(coordinates, data.frame(TripId = Newtrain$TRIP_ID[i],
+                                              Ordinal = 1:nrow(pos),
+                                              Lat = pos$V2,
+                                              Lon = pos$V1,
+                                             Status = status,
+                                              Endpoint = status != "During Trip"))
+  
+}
+
+}})
+
+
+coordinates$Status <- factor(coordinates$Status, levels <- c("start", "During Trip", "Last Observation"))
+stopCluster(clus)
+
+
+
+
+```
+
+
+
+Leaflet is a very popular open-source JavaScript libraries for interactive maps. It is used by websites ranging from The New York Times and The Washington Post, which is a very good replacement of ggmap. From year 2018, ggmap require API to download maps but leaflet does not require that. The R package make it easy to integrate and control leaflet maps in R. 
+
+With longitude and latitude of trajcetories in hand, we can easily draw trajectories on the map. Below we just pick out the endpoints of trajectories and plot them on the map. Then we can know where are the frequent places passengers get on and off. 
+
+```{r}
+library(sp)
+library(leaflet)
+
+# test = coordinates[[1]]
+# test$Status = as.factor(test$Status)
+# Size = c(1,1.5,3)
+Lat = unlist(lapply(coordinates, "[" , 3), use.names = FALSE)
+Lon = unlist(lapply(coordinates, "[" , 4), use.names = FALSE)
+sta = unlist(lapply(coordinates,"[",6), use.names = FALSE)
+test = data.frame("Lon" = Lon,  "Lat" = Lat, "sta" = sta)        
+testend = test[test$sta==1, ]         
+
+leaflet(data = testend[1:500,]) %>% setView(lng = -8.617869, lat = 41.174577,zoom =  13) %>%
+   addTiles() %>% addCircleMarkers(lng = ~Lon, lat = ~Lat, stroke = FALSE , fillOpacity = 0.7, radius = 4)
+# radius = ~ifelse(Status == "During Trip", 5, 7) , color = ~ifelse(Status == "During Trip",     # "red", "blue")
+# setView( lng = -8.617869, lat = 41.174577, zoom = 3 ) 
+#  addPopups(-8.617869, 41.174577, "Porto",
+#    options = popupOptions(closeButton = FALSE)
+#  )
+  
+
+
+
+```
+
+```{r}
+m = leaflet() %>% addTiles()
+df = data.frame(
+  lat = rnorm(100),
+  lng = rnorm(100),
+  size = runif(100, 5, 20),
+  color = sample(colors(), 100)
+)
+m = leaflet(df) %>% addTiles()
+m %>% addCircleMarkers(radius = ~size, color = ~color, fill = FALSE)
+#m %>% addCircleMarkers(radius = runif(100, 4, 10), color = c('red'))
+```
+
+## Model building
+
+
+```{r}
+mc.cores=parallel::detectCores()
+x = lapply(Coor, "[[", 2)
+Trajectorydata = list( N  = length(Coor), M =11, D=100, x = x) 
+
+fit1 = stan(file = "PPCA.stan",
+            data = Trajectorydata,
+            chains = 1,
+            warmup = 100,
+            iter = 500,
+            cores = 32,
+            refresh = 100)
+
+
+```
+
+```{r}
+print(fit1, pars=c("z", "w", "sigma", "lp__"))
+plot(fit1)
+traceplot(fit1, pars = c("z", "w"), inc_warmup = TRUE, nrow = 2)
+```
+```{r}
+sampler_params = get_sampler_params(fit1, inc_warmup = TRUE)
+summary(do.call(rbind, sampler_params), digits = 2)
+
+```
+ 
+
+
+```{r}
+list_of_draws = extract(fit1)
+print(names(list_of_draws))
+list_of_draws$z
+list_of_draws$w
+```
+```{r}
+fit_summary = summary(fit1)
+print(fit_summary$summary)
+```
+```{r}
+
+df_of_draws <- as.data.frame(fit1)
+summary(df_of_draws)
+
+df_of_summary = as.data.frame(fit_summary$summary) 
+df_of_summary$mean
+
+#Z = data.frame()
+#Z = rbind(Z, df_of_summary$mean[1:996])
+M = 11
+Z = t(matrix(df_of_summary$mean[1: (M*dim(Newtrain)[1])],nrow = 11))
+```
+
+```{r}
+K =30 
+reducedata = list( N = dim(Newtrain)[1], K=30, D = 11, y = Z, alpha0 = 10)
+
+fit2 = stan(
+  file = "GMMsimple.stan",  # Stan program
+  data = reducedata,    # named list of data
+  chains = 1,             # number of Markov chains
+  warmup = 100,          # number of warmup iterations per chain
+  iter = 1000,             # total number of iterations per chain
+  cores = 10,              # number of cores (using 2 just for the vignette)
+  refresh = 100          # show progress every 'refresh' iterations
+  )
+```
+
+
+
+
+```{r}
+sampler_params2 = get_sampler_params(fit2, inc_warmup = FALSE)
+sampler_params2
+list_of_draws2 = extract(fit2)
+list_of_draws2
+
+fit2_summary = summary(fit2)$summary
+df_of_summary2 = as.data.frame(fit2_summary)
+df_of_summary2$mean
+
+Theta = df_of_summary2[c(1:30),]$mean
+Mu = matrix(df_of_summary2[c(31:360),]$mean , nrow = 11)
+Sigma = matrix(df_of_summary2[c(361:690),]$mean, nrow =11)
+library("mvtnorm")
+
+posterior = function(x , mu, sigma, theta ){
+  ps = log(theta) + dmvnorm(x, mean = mu, sigma = sigma*diag(length(x)), log = TRUE )
+}
+
+
+library(Matrix)
+Ps = mat.or.vec(dim(Newtrain)[1], K )
+
+for (i in 1:dim(Newtrain)[1]){
+  for (k in 1:K) {
+    Ps[i,k]  = posterior(Z[i,], Mu[,k], sigma[,k], Theta[k] )
+  }
+}
+
+Cluster = apply(Ps,1,which.max)
+
+```
+
+
+## Interpret
+* We plot the endpoints of each trips on the map of Porto, the second-largest city in Portugal after Lisbon. It is located on the north of Douro river. We look into the endpoints and find that most of the trip started or ended near Centro Historico, which might be the central of Porto. People get on or off taxi more often at places such as Oporto Boutique Guest House, Zoom Porto and CLUB port rugby. Besides, there are many restaurants and hospitals in the central of Porto that people choose as their destinations. Also, our data set include trips with type B so many people take a taxi from a specific stand.  
+
