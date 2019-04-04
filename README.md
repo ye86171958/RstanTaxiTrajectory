@@ -19,4 +19,4 @@ The '''foreach''' package provides a new looping construct for executing R code 
 
 Leaflet is a very popular open-source JavaScript libraries for interactive maps. It is used by websites ranging from The New York Times and The Washington Post, which is a very good replacement of ggmap. From year 2018, ggmap require API to download maps but leaflet does not require that. The R package make it easy to integrate and control leaflet maps in R.
 
-To save Leaflet in R map as png or jpg file, you can install PhantomJS and install webshot from github.
+To save Leaflet in R map as png or jpg file, you can install PhantomJS and install webshot from github. For more details, see my code in file 
