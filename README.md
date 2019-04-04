@@ -14,3 +14,7 @@ We start by writing a Stan program for the model in a text file. If you are usin
 ## Parallel in R 
 
 The '''foreach''' package provides a new looping construct for executing R code repeatedly. he  main  reason  for  using  the foreach package  is  that  it supports parallel execution, that is, it can execute those repeated operations on multiple processors/cores on your computer, or on multiple nodes of a cluster. The output is in list form.
+
+## Make plot 
+
+Leaflet is a very popular open-source JavaScript libraries for interactive maps. It is used by websites ranging from The New York Times and The Washington Post, which is a very good replacement of ggmap. From year 2018, ggmap require API to download maps but leaflet does not require that. The R package make it easy to integrate and control leaflet maps in R.
