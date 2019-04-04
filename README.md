@@ -13,4 +13,4 @@ We start by writing a Stan program for the model in a text file. If you are usin
 
 ## Parallel in R 
 
-The ''foreach'' package provides a new looping construct for executing R code repeatedly. he  main  reason  for  using  theforeachpackage  is  that  it supports parallel execution, that is, it can execute those repeated operations on multiple processors/cores on your computer, or on multiple nodes of a cluster. The output is in list form.
+The '''foreach''' package provides a new looping construct for executing R code repeatedly. he  main  reason  for  using  the foreach package  is  that  it supports parallel execution, that is, it can execute those repeated operations on multiple processors/cores on your computer, or on multiple nodes of a cluster. The output is in list form.
