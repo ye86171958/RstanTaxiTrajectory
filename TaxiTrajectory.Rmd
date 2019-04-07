@@ -2,7 +2,9 @@
 title: "Proposal"
 author: "Hanxuan Ye"
 date: "2019/3/2"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r, echo=FALSE}
@@ -87,14 +89,6 @@ ggplot(data = TABLE, aes(x=Var1, y=Freq))+geom_point()+labs(title = 'Evolution o
 ```
 
 Load the rstan and shinystan packages.
-```{r}
-## Load the package rstan and shinystan
-library("rstan")
-library(shinystan)
-options(mc.cores = parallel::detectCores())
-rstan_options(auto_write = TRUE)
-mc.cores=parallel::detectCores()
-```
 
 There are 17 million Trajectories and we only randomly pick part of them. coordinates can be coverted to numeric form by using rjson package. We then know the trajectory length and positions of each trip.
 ```{r}
@@ -199,36 +193,22 @@ sta = unlist(lapply(coordinates,"[",6), use.names = FALSE)
 test = data.frame("Lon" = Lon,  "Lat" = Lat, "sta" = sta)        
 testend = test[test$sta==1, ]         
 
-leaflet(data = testend[1:500,]) %>% setView(lng = -8.617869, lat = 41.174577,zoom =  13) %>%
+leaflet(data = testend[1:3000,]) %>% setView(lng = -8.617869, lat = 41.174577,zoom =  13) %>%
    addTiles() %>% addCircleMarkers(lng = ~Lon, lat = ~Lat, stroke = FALSE , fillOpacity = 0.7, radius = 4)
-# radius = ~ifelse(Status == "During Trip", 5, 7) , color = ~ifelse(Status == "During Trip",     # "red", "blue")
-# setView( lng = -8.617869, lat = 41.174577, zoom = 3 ) 
-#  addPopups(-8.617869, 41.174577, "Porto",
-#    options = popupOptions(closeButton = FALSE)
-#  )
-  
-
-
-
 ```
 
-```{r}
-m = leaflet() %>% addTiles()
-df = data.frame(
-  lat = rnorm(100),
-  lng = rnorm(100),
-  size = runif(100, 5, 20),
-  color = sample(colors(), 100)
-)
-m = leaflet(df) %>% addTiles()
-m %>% addCircleMarkers(radius = ~size, color = ~color, fill = FALSE)
-#m %>% addCircleMarkers(radius = runif(100, 4, 10), color = c('red'))
-```
 
 ## Model building
 
+RStan is the R interface to Stan. It is distributed on CRAN as the rstan packge and its source code is hosted on GitHub. We start by writing a Stan program for the model in a text file. In order to reduce the dimension, we apply Probabilistic PCA to the orginal data set.
+Rstan provide both Hamilton Markov Chain (HMC) and automatic differential variational inference (ADVI), we can compare this two methods.    
+```{r, echo = FALSE}
+## Load the package rstan and shinystan
+library("rstan")
+library(shinystan)
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
 
-```{r}
 mc.cores=parallel::detectCores()
 x = lapply(Coor, "[[", 2)
 Trajectorydata = list( N  = length(Coor), M =11, D=100, x = x) 
@@ -237,51 +217,85 @@ fit1 = stan(file = "PPCA.stan",
             data = Trajectorydata,
             chains = 1,
             warmup = 100,
-            iter = 500,
-            cores = 32,
+            iter = 1000,
+            cores = 16,
             refresh = 100)
 
+```
+
+```{r}
+m = stan_model(file = "PPCA.stan" )
+fitvb1 = vb(m,data = Trajectorydata)
+
+```
+```{r}
+fitvb1_summary = summary(fitvb1)$summary
+vb1_of_summary = as.data.frame(fit_summary$summary) 
+vb1_of_summary$mean
+Znew = t(matrix(vb1_of_summary$mean[1: (M*dim(Newtrain)[1])],nrow = 11))
 
 ```
 
 ```{r}
-print(fit1, pars=c("z", "w", "sigma", "lp__"))
-plot(fit1)
-traceplot(fit1, pars = c("z", "w"), inc_warmup = TRUE, nrow = 2)
-```
-```{r}
-sampler_params = get_sampler_params(fit1, inc_warmup = TRUE)
-summary(do.call(rbind, sampler_params), digits = 2)
+reducedata2 = list( N = dim(Newtrain)[1], K=30, D = 11, y = Znew, alpha0 = 10)
+m2 = stan_model(file= "GMMsimple.stan")
+fitvb2 = vb(m2, data = reducedata2 )
 
+fitvb2_summary = summary(fitvb2)$summary
+vb2_of_summary = as.data.frame(fitvb2_summary)
+vb2_of_summary$mean
+
+
+Theta2 = vb2_of_summary[c(1:K),]$mean
+Mu2 = matrix(vb2_of_summary[c( (K+1):(K*(M+1)) ),]$mean , nrow = M)
+Sigma2 = matrix(vb2_of_summary[c((K*(M+1)+1): (K*(2*M+1))),]$mean, nrow =M)
+
+library("mvtnorm")
+
+posterior = function(x , mu, sigma, theta ){
+  ps = log(theta) + dmvnorm(x, mean = mu, sigma = sigma*diag(length(x)), log = TRUE )
+}
+
+
+library(Matrix)
+Ps2 = mat.or.vec(dim(Newtrain)[1], K )
+
+for (i in 1:dim(Newtrain)[1]){
+  for (k in 1:K) {
+    Ps2[i,k]  = posterior(Znew[i,], Mu2[,k], Sigma2[,k], Theta2[k] )
+  }
+}
+
+Cluster2 = apply(Ps2,1,which.max)
+table(Cluster2)
 ```
+
+
+
+
  
 
 
-```{r}
-list_of_draws = extract(fit1)
-print(names(list_of_draws))
-list_of_draws$z
-list_of_draws$w
-```
+
+
 ```{r}
 fit_summary = summary(fit1)
 print(fit_summary$summary)
-```
-```{r}
 
-df_of_draws <- as.data.frame(fit1)
-summary(df_of_draws)
+#df_of_draws <- as.data.frame(fit1)
+#summary(df_of_draws)
 
 df_of_summary = as.data.frame(fit_summary$summary) 
 df_of_summary$mean
 
 #Z = data.frame()
 #Z = rbind(Z, df_of_summary$mean[1:996])
-M = 11
-Z = t(matrix(df_of_summary$mean[1: (M*dim(Newtrain)[1])],nrow = 11))
 ```
 
-```{r}
+
+```{r, cache = TRUE}
+M = 11
+Z = t(matrix(df_of_summary$mean[1: (M*dim(Newtrain)[1])],nrow = 11))
 K =30 
 reducedata = list( N = dim(Newtrain)[1], K=30, D = 11, y = Z, alpha0 = 10)
 
@@ -300,18 +314,17 @@ fit2 = stan(
 
 
 ```{r}
-sampler_params2 = get_sampler_params(fit2, inc_warmup = FALSE)
-sampler_params2
-list_of_draws2 = extract(fit2)
-list_of_draws2
+
+#list_of_draws2 = extract(fit2)
+#list_of_draws2
 
 fit2_summary = summary(fit2)$summary
 df_of_summary2 = as.data.frame(fit2_summary)
 df_of_summary2$mean
 
-Theta = df_of_summary2[c(1:30),]$mean
-Mu = matrix(df_of_summary2[c(31:360),]$mean , nrow = 11)
-Sigma = matrix(df_of_summary2[c(361:690),]$mean, nrow =11)
+Theta = df_of_summary2[c(1:K),]$mean
+Mu = matrix(df_of_summary2[c( (K+1):(K*(M+1)) ),]$mean , nrow = M)
+Sigma = matrix(df_of_summary2[c((K*(M+1)+1): (K*(2*M+1))),]$mean, nrow =M)
 library("mvtnorm")
 
 posterior = function(x , mu, sigma, theta ){
@@ -324,15 +337,115 @@ Ps = mat.or.vec(dim(Newtrain)[1], K )
 
 for (i in 1:dim(Newtrain)[1]){
   for (k in 1:K) {
-    Ps[i,k]  = posterior(Z[i,], Mu[,k], sigma[,k], Theta[k] )
+    Ps[i,k]  = posterior(Z[i,], Mu[,k], Sigma[,k], Theta[k] )
   }
 }
 
 Cluster = apply(Ps,1,which.max)
+table(Cluster)
+
 
 ```
 
+```{r}
+K18 = Newtrain[Cluster2==12,]
+
+numCores = parallel::detectCores()
+clus = makeCluster(numCores)
+registerDoSNOW(clus)
+Kcoordinates = data.frame(TripId=c(),Ordinal = c(), Lat=c(), Lon=c(), Status = c(), 
+ Endpoint=c())
+
+
+system.time( { {
+  Kcoordinates = foreach (i=1:nrow(K18)) %dopar% {
+  pos = positions(K18[i,])
+  if (nrow(pos) == 1){
+   status = c("start")
+  }
+  else 
+  {
+     status = c("start", rep("During Trip", nrow(pos)-2), "Last Obersevation")
+
+  }
+   Kcoordinates = rbind(Kcoordinates, data.frame(TripId = K18$TRIP_ID[i],
+                                              Ordinal = 1:nrow(pos),
+                                              Lat = pos$V2,
+                                              Lon = pos$V1,
+                                             Status = status,
+                                              Endpoint = status != "During Trip"))
+  
+}
+
+}})
+
+
+Kcoordinates$Status <- factor(coordinates$Status, levels <- c("start", "During Trip", "Last Observation"))
+
+stopCluster(clus)
+
+
+```
+
+```{r}
+
+Klat = unlist(lapply(Kcoordinates, "[" , 3), use.names = FALSE)
+Klon = unlist(lapply(Kcoordinates, "[" , 4), use.names = FALSE)
+Ksta = unlist(lapply(Kcoordinates,"[",6), use.names = FALSE)
+Ktest = data.frame("Lon" = Klon,  "Lat" = Klat, "sta" = Ksta)
+Ktest$sta = factor(Ktest$sta, levels = c(0,1))
+
+Ktestend = Ktest[test$sta==1, ]         
+
+
+leaflet(data = Ktest[1:5000,]) %>% setView(lng = -8.617869, lat = 41.174577,zoom =  13) %>%
+   addTiles() %>% addCircleMarkers(lng = ~Lon, lat = ~Lat, stroke = FALSE , fillOpacity = 0.7,  radius = ~ifelse(sta == 0, 2, 5),color = ~ifelse(sta == 0,  "red", "blue"))
+
+
+ 
+
+```
+Save each picture as a png file.
+```{r}
+library(devtools)
+install_github("wch/webshot")
+
+## load packages
+library(leaflet)
+library(htmlwidgets)
+library(webshot)
+
+## create map
+m <- leaflet(data = Ktest[1:5000,]) %>% setView(lng = -8.617869, lat = 41.174577,zoom =  11) %>%
+   addTiles() %>% addCircleMarkers(lng = ~Lon, lat = ~Lat, stroke = FALSE , fillOpacity = 0.7,  radius = ~ifelse(sta == 0, 2, 5),color = ~ifelse(sta == 0,  "red", "blue"))
+
+## save html to png
+saveWidget(m, "temp.html", selfcontained = FALSE)
+webshot("temp.html", file = "Rplot.png",
+        cliprect = "viewport")
+```
+
+
 
 ## Interpret
-* We plot the endpoints of each trips on the map of Porto, the second-largest city in Portugal after Lisbon. It is located on the north of Douro river. We look into the endpoints and find that most of the trip started or ended near Centro Historico, which might be the central of Porto. People get on or off taxi more often at places such as Oporto Boutique Guest House, Zoom Porto and CLUB port rugby. Besides, there are many restaurants and hospitals in the central of Porto that people choose as their destinations. Also, our data set include trips with type B so many people take a taxi from a specific stand.  
+* We plot the endpoints of each trips on the map of Porto, the second-largest city in Portugal after Lisbon. It is located on the north of Douro river. We look into the endpoints and find that most of the trip started or ended near Centro Historico, which might be the central of Porto. People get on or off taxi more often at places such as Oporto Boutique Guest House, Zoom Porto and CLUB port rugby. Besides, there are many restaurants and hospitals in the central of Porto that people choose as their destinations. Also, our data set include trips with type B so many people take a taxi from a specific stand. 
+
+* We show in this modern exploratory data analysis task, the ADVI is powerful, enables a scientist to quickly develop and revise complex hierarchical models. Although iterations are only 1000, HMC and NUTS struggle with both models, it takes hours to sampling. ADVI, however, finishing 10000 updates in several minutes.  
+
+* The trajectories have structures. They appear on major roads and highways frequently. The clustering is geographical: taxi trajectories that are close to each other are bundled together. The clusters identify frequently taken taxi trajectories.
+
+```{r, echo=FALSE}
+#sampler_params = get_sampler_params(fit1, inc_warmup = TRUE)
+#summary(do.call(rbind, sampler_params), digits = 2)
+
+#sampler_params2 = get_sampler_params(fit2, inc_warmup = FALSE)
+#sampler_params2
+#library(shiny)
+#runExample("01_hello")
+#print(fit1, pars=c("z", "w", "sigma", "lp__"))
+#list_of_draws = extract(fit1)
+#print(names(list_of_draws))
+#list_of_draws$z
+#list_of_draws$w
+```
 
