@@ -1,0 +1,74 @@
+---
+title: "Report"
+author: "Hanxuan Ye"
+date: "2019/5/12"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+## Background 
+
+The taxi industry is developing rapidly. New competitors and technologies are changing the way traditional taxi services do business. This development brings about efficiency, accompanied by new problems.  
+
+A major evolvement is that the electronic dispatch system has replaced VHF-radio dispatch system. The mobile data terminals installed in each vehicle can provide information on GPS location and taximeter state. This can make it easy to see where the taxi has been but not where it is going.
+
+Another recent change is the switch from broadcast-based (one to many) radio messages to unicast-based (one to one) messages. With unicast-messages, the dispatcher should decide which taxi they should dispatch to a pick up location. Meanwhile, it is hard for dispatcher to dispatch the car because the taxi usually do not enter the drop off location.
+
+You might know where the taxi is going by tracking its spatial trajectory. Similarly, given the taxi id, it might be possible to predict its final destination based on the regularity of pre-hired services. In a significant number of taxi rides (approximately 25%), the taxi has been called through the taxi call-center, and the passenger’s telephone id can be used to narrow the destination prediction based on historical ride data connected to their telephone id. 
+
+
+## Dataset
+
+
+The dataset includes a complete year (from 01/07/2013 to 30/06/2014) of the trajectories for all 442 taxis in the city of Porto, Portugal. These taxis operates through a taxi dispatch central with mobile data terminal installed in the vehicles. Each ride is categorized into one of three categories: 
+
+*  taxi central based. 
+*  stand-based.
+*  non-taxi central based.
+
+when such information is available from the telephone call. The last two categories refer to services that were demanded directly to the taxi drivers on a taxi stand or on a random street.
+
+*  **TRIP_ID:** (String) It contains an unique identifier for each trip;
+*  **CALL_TYPE:** (char) It identifies the way used to demand this service. It may contain one of three possible values:
+     1. 'A' if this trip was dispatched from the central;
+     2. 'B' if this trip was demanded directly to a taxi driver on a specific stand;
+     3. 'C' otherwise (i.e. a trip demanded on a random street).
+*  **ORIGIN_CALL:** (integer): It contains an unique identifier for the taxi stand. It identifies the starting point of the trip if CALL_TYPE=’B�?. Otherwise, it assumes a NULL value;
+*  **ORIGIN_STAND:** (integer): It contains an unique identifier for the taxi stand. It identifies the starting point of the trip if CALL_TYPE=’B�?. Otherwise, it assumes a NULL value;
+*  **TAXI_ID:** (integer): It contains an unique identifier for the taxi driver that performed each trip;
+*  **TIMESTAMP:** (integer) Unix Timestamp (in seconds). It identifies the trip's start;
+*  **DAYTYPE:** (char) It identifies the daytype of the trip's start. It assumes one of three possible values:
+     1. 'B' if this trip started on a holiday or any other special day (i.e. extending holidays, floating holidays, etc.);
+     2. 'C' if the trip started on a day before a type-B day;
+     3. 'A' otherwise (i.e. a normal day, workday or weekend).
+*  **MISSING_DATA** (Boolean) It is FALSE when the GPS data stream is complete and TRUE whenever one (or more) locations are missing.
+*  **POLYLINE** (String): It contains a list of GPS coordinates (i.e. WGS84 format) mapped as a string. The beginning and the end of the string are identified with brackets (i.e. [ and ], respectively). Each pair of coordinates is also identified by the same brackets as [LONGITUDE, LATITUDE]. This list contains one pair of coordinates for each 15 seconds of trip. The last list item corresponds to the trip’s destination while the first one represents its start;
+
+
+## Preprocessing Data
+
+There are 17 million Trajectories and we only randomly pick part of them. coordinates can be coverted to numeric form by using rjson package. We then know the trajectory length and positions of each trip. We can delete the missing data and make a plot with respect to each date.
+
+Each trajectory has a different length: shorter trip contains fewer $(x,y)$ coordinates than longer ones. The average trip is approximately 13 minutes long, which correspongding to 50 coordinates. We interpolate all trajectories to 50 coordinate pairs, that is, a point in $\mathbb{R}^{100}$. In order to accelerate the procedure, we use R in parallel.
+
+Leaflet is a very popular open-source JavaScript libraries for interactive maps. It is used by websites ranging from The New York Times and The Washington Post, which is a very good replacement of ggmap. From year 2018, ggmap require API to download maps but leaflet does not require that. The R package make it easy to integrate and control leaflet maps in R. 
+
+With longitude and latitude of trajcetories in hand, we can easily draw trajectories on the map. Below we just pick out the endpoints of trajectories and plot them on the map. Then we can know where are the frequent places passengers get on and off. 
+
+
+## Model Building
+
+RStan is the R interface to Stan. It is distributed on CRAN as the rstan packge and its source code is hosted on GitHub. We start by writing a Stan program for the model in a text file. In order to reduce the dimension, we apply Probabilistic PCA to the orginal data set.
+Rstan provide both Hamilton Markov Chain (HMC) and automatic differential variational inference (ADVI), we can compare this two methods.    
+
+## Conlusion
+
+* We plot the endpoints of each trips on the map of Porto, the second-largest city in Portugal after Lisbon. It is located on the north of Douro river. We look into the endpoints and find that most of the trip started or ended near Centro Historico, which might be the central of Porto. People get on or off taxi more often at places such as Oporto Boutique Guest House, Zoom Porto and CLUB port rugby. Besides, there are many restaurants and hospitals in the central of Porto that people choose as their destinations. Also, our data set include trips with type B so many people take a taxi from a specific stand. 
+
+* We show in this modern exploratory data analysis task, the ADVI is powerful, enables a scientist to quickly develop and revise complex hierarchical models. Although iterations are only 1000, HMC and NUTS struggle with both models, it takes hours to sampling. ADVI, however, finishing 10000 updates in several minutes. The EDA is an iterative effort: we want to rapidly evaluate models and modify them based on what we learn. Many sanmpling methods is computation complex, but ADVI provides automatic and fast inference. 
+
+* The trajectories have structures. They appear on major roads and highways frequently. The clustering is geographical: taxi trajectories that are close to each other are bundled together. The clusters identify frequently taken taxi trajectories. The particular busy roads is bridges that across the Duoro river. Clustering through ADVI divides trajectories into fewer clusters while HMC divides into more parts. We can see clusters generated by former are more informative. The problem of HMC and NUTS is that they are too slow and thousands of sampling may not converge.  
+
+
