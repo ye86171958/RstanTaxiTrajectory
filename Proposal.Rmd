@@ -1,0 +1,66 @@
+---
+title: "Proposal"
+author: "Hanxuan Ye"
+date: "2019/5/12"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Background 
+
+The taxi industry is developing rapidly. New competitors and technologies are changing the way traditional taxi services do business. This development brings about efficiency, accompanied by new problems.  
+
+A major evolvement is that the electronic dispatch system has replaced VHF-radio dispatch system. The mobile data terminals installed in each vehicle can provide information on GPS location and taximeter state. This can make it easy to see where the taxi has been but not where it is going.
+
+Another recent change is the switch from broadcast-based (one to many) radio messages to unicast-based (one to one) messages. With unicast-messages, the dispatcher should decide which taxi they should dispatch to a pick up location. Meanwhile, it is hard for dispatcher to dispatch the car because the taxi usually do not enter the drop off location.
+
+You might know where the taxi is going by tracking its spatial trajectory. Similarly, given the taxi id, it might be possible to predict its final destination based on the regularity of pre-hired services. In a significant number of taxi rides (approximately 25%), the taxi has been called through the taxi call-center, and the passenger’s telephone id can be used to narrow the destination prediction based on historical ride data connected to their telephone id. 
+
+
+## Dataset
+
+
+The dataset includes a complete year (from 01/07/2013 to 30/06/2014) of the trajectories for all 442 taxis in the city of Porto, Portugal. These taxis operates through a taxi dispatch central with mobile data terminal installed in the vehicles. Each ride is categorized into one of three categories: 
+
+*  taxi central based. 
+*  stand-based.
+*  non-taxi central based.
+
+when such information is available from the telephone call. The last two categories refer to services that were demanded directly to the taxi drivers on a taxi stand or on a random street.
+
+*  **TRIP_ID:** (String) It contains an unique identifier for each trip;
+*  **CALL_TYPE:** (char) It identifies the way used to demand this service. It may contain one of three possible values:
+     1. 'A' if this trip was dispatched from the central;
+     2. 'B' if this trip was demanded directly to a taxi driver on a specific stand;
+     3. 'C' otherwise (i.e. a trip demanded on a random street).
+*  **ORIGIN_CALL:** (integer): It contains an unique identifier for the taxi stand. It identifies the starting point of the trip if CALL_TYPE=’B’. Otherwise, it assumes a NULL value;
+*  **ORIGIN_STAND:** (integer): It contains an unique identifier for the taxi stand. It identifies the starting point of the trip if CALL_TYPE=’B’. Otherwise, it assumes a NULL value;
+*  **TAXI_ID:** (integer): It contains an unique identifier for the taxi driver that performed each trip;
+*  **TIMESTAMP:** (integer) Unix Timestamp (in seconds). It identifies the trip's start;
+*  **DAYTYPE:** (char) It identifies the daytype of the trip's start. It assumes one of three possible values:
+     1. 'B' if this trip started on a holiday or any other special day (i.e. extending holidays, floating holidays, etc.);
+     2. 'C' if the trip started on a day before a type-B day;
+     3. 'A' otherwise (i.e. a normal day, workday or weekend).
+*  **MISSING_DATA** (Boolean) It is FALSE when the GPS data stream is complete and TRUE whenever one (or more) locations are missing.
+*  **POLYLINE** (String): It contains a list of GPS coordinates (i.e. WGS84 format) mapped as a string. The beginning and the end of the string are identified with brackets (i.e. [ and ], respectively). Each pair of coordinates is also identified by the same brackets as [LONGITUDE, LATITUDE]. This list contains one pair of coordinates for each 15 seconds of trip. The last list item corresponds to the trip’s destination while the first one represents its start;
+
+
+## Questions
+* How to cluster the trajectories? The trajectories have structure; major road and highways appear frequently. Some roads are particular prone to traffic and some roads lead to longer trips.
+
+* How to predict the destination of a taxi while it is in service?  If you can predict precisely, it will allow dispatcher to identify which taxi to assign to each pickup request. (usually, in a high demand period, there is a taxi end up near or exactly at a requested pick up location).
+
+*  What's the relationship bettween taxi id and final destination? Given a taxi id, it might be possible to predict its final destination based on regularity of pre-hired services.
+
+*  Can we predict how long a driver will have his taxi occupied? If a dispatcher know when a taxi will be ending the trip, they would be better able to assign to each pickup request.
+
+## Model Building
+
+The average trip is approximate 13 minutes long, corresponding to 50 coordinates pairs. We can convert each trajectory into a point in R100. The trajectories have structure because major road and highways appear frequently. This suggest we identify a low dimensional structure of the data. To do dimensional reduction, we can apply PPCA (probabilistic principal component analysis), a generalization of classical PCA. Then we apply GMM to cluster the trajectories.
+
+
+
+
+
+
